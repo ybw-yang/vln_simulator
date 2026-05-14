@@ -27,6 +27,9 @@ scene_name: 00829-QaLdnwvtxbs
 # temp
 default_agent: 0
 
+# Habitat-Sim GPU index (see habitat_utils.make_sim_cfg).
+gpu_device_id: -1
+
 # Scene Configuration
 # load from scene config
 # if load from scene config, then we no need define scene path in the following

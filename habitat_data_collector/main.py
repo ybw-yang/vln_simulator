@@ -2,13 +2,297 @@
 # Available for: Replica, HM3D, MP3D
 # Single Scene setting and run, set the config to choose your desired dataset and save path
 
+import glob
 import os
-import time
-import hydra
+import sys
 import threading
-import habitat_sim
+import time
+from pathlib import Path
+from typing import Optional
 
 from omegaconf import DictConfig
+
+# ---------------------------------------------------------------------------
+# EGL / GLVND must be chosen before libEGL is first loaded. Setting these in
+# main(cfg) is too late if habitat_sim or Magnum already pulled in EGL.
+# ---------------------------------------------------------------------------
+
+_egl_vendor_warn_emitted = False
+
+
+def _is_software_gl_forced() -> bool:
+    """CPU llvmpipe path via env before import (YAML fallback is applied in main)."""
+    if os.environ.get("VLN_SIMULATOR_FORCE_SOFTWARE_GL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
+    v = os.environ.get("LIBGL_ALWAYS_SOFTWARE", "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def _apply_software_gl_env() -> None:
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "true")
+
+
+def _optimize_ld_library_path_for_nv_egl() -> None:
+    """Conda activation often puts $CONDA_PREFIX/lib first so Mesa libEGL loads
+    before the system NVIDIA/GLVND stack. Prefer distro lib dirs, then conda.
+    Skip with VLN_SIMULATOR_SKIP_CONDA_LD_REORDER=1.
+    """
+    if os.environ.get("VLN_SIMULATOR_SKIP_CONDA_LD_REORDER", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        return
+    conda_lib = str(Path(conda_prefix) / "lib")
+    if not Path(conda_lib).is_dir():
+        return
+
+    prepend = []
+    if os.environ.get("VLN_SIMULATOR_NO_SYSTEM_GL_PREPEND", "").strip() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        sys_gl = Path("/usr/lib/x86_64-linux-gnu")
+        if sys_gl.is_dir():
+            prepend.append(str(sys_gl.resolve()))
+
+    parts = [
+        p for p in os.environ.get("LD_LIBRARY_PATH", "").split(":") if p and p != conda_lib
+    ]
+
+    seen = set()
+    ordered = []
+    for d in prepend:
+        if d not in seen:
+            seen.add(d)
+            ordered.append(d)
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            ordered.append(p)
+
+    if conda_lib not in ordered:
+        ordered.append(conda_lib)
+
+    os.environ["LD_LIBRARY_PATH"] = ":".join(ordered)
+
+    if os.environ.get("VLN_SIMULATOR_DEBUG_EGL", "").strip() in ("1", "true", "yes"):
+        print(
+            "[vln_simulator egl] LD_LIBRARY_PATH=",
+            os.environ.get("LD_LIBRARY_PATH", "")[:400],
+            flush=True,
+        )
+
+
+def _is_named_nvidia_vendor_json(name: str) -> bool:
+    return "nvidia" in name.lower()
+
+
+def _discover_nvidia_egl_vendor_json_paths():
+    found = []
+    seen = set()
+
+    def add(p: Path) -> None:
+        if not p.is_file():
+            return
+        if not _is_named_nvidia_vendor_json(p.name):
+            return
+        k = str(p.resolve())
+        if k in seen:
+            return
+        seen.add(k)
+        found.append(p)
+
+    roots = (
+        Path("/usr/share/glvnd/egl_vendor.d"),
+        Path("/etc/glvnd/egl_vendor.d"),
+    )
+    for root in roots:
+        if not root.is_dir():
+            continue
+        p10 = root / "10_nvidia.json"
+        if p10.is_file():
+            add(p10)
+        for p in sorted(root.glob("*.json")):
+            add(p)
+
+    for pattern in (
+        "/usr/share/**/egl_vendor.d/*.json",
+        "/etc/**/egl_vendor.d/*.json",
+    ):
+        try:
+            hits = glob.glob(pattern, recursive=True)
+        except (OSError, ValueError):
+            continue
+        for s in hits:
+            add(Path(s))
+
+    return found
+
+
+def _iter_nvidia_vendor_priority_paths(cfg: Optional[DictConfig]):
+    seen = set()
+
+    def uniq(p: Optional[Path]) -> Optional[Path]:
+        if p is None:
+            return None
+        p = Path(p).expanduser()
+        key = str(p)
+        if key in seen:
+            return None
+        seen.add(key)
+        return p
+
+    alt = os.environ.get("VLN_SIMULATOR_NV_EGL_JSON") or ""
+    if alt.strip():
+        u = uniq(Path(alt))
+        if u is not None:
+            yield u
+
+    if cfg is not None:
+        yml = cfg.get("nvidia_egl_vendor_json") or ""
+        if str(yml).strip():
+            u = uniq(Path(str(yml)))
+            if u is not None:
+                yield u
+
+    for p in _discover_nvidia_egl_vendor_json_paths():
+        u = uniq(p)
+        if u is not None:
+            yield u
+
+
+def _resolve_and_set_nvidia_egl_vendor(cfg: Optional[DictConfig]) -> bool:
+    """Set __EGL_VENDOR_LIBRARY_FILENAMES from env path, YAML, or filesystem discovery."""
+    if (os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES") or "").strip():
+        _apply_nvidia_driver_headless_hints()
+        return True
+
+    for p in _iter_nvidia_vendor_priority_paths(cfg):
+        if not p.is_file():
+            continue
+        os.environ["__EGL_VENDOR_LIBRARY_FILENAMES"] = str(p.resolve())
+        os.environ.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        _apply_nvidia_driver_headless_hints()
+        return True
+    return False
+
+
+def _bootstrap_egl_env_pre_import() -> None:
+    """Best-effort before habitat_sim import (YAML discovery runs again in main)."""
+    _resolve_and_set_nvidia_egl_vendor(None)
+
+
+def _warn_missing_nvidia_egl_vendor() -> None:
+    global _egl_vendor_warn_emitted
+    if _egl_vendor_warn_emitted:
+        return
+    _egl_vendor_warn_emitted = True
+    if (os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES") or "").strip():
+        return
+    if _is_software_gl_forced():
+        return
+    print(
+        "[vln_simulator egl] WARN: no NVIDIA EGL vendor JSON "
+        "(e.g. /usr/share/glvnd/egl_vendor.d/10_nvidia.json missing). Install "
+        "proprietary NVIDIA + matching libnvidia-gl-* for your driver, "
+        "or use VLN_SIMULATOR_FORCE_SOFTWARE_GL=1 (slow; set before launching "
+        "Python for best results).",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _apply_nvidia_driver_headless_hints() -> None:
+    """GBM/backend hints once NVIDIA EGL vendor JSON was selected."""
+    if os.environ.get("VLN_SIMULATOR_SKIP_NV_EGL_HINTS", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+
+    egl_vendor = os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES", "")
+    if not egl_vendor or "nvidia" not in Path(egl_vendor).name.lower():
+        return
+
+    os.environ.setdefault("GBM_BACKEND", "nvidia-drm")
+    os.environ.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+
+
+def _preload_system_glvnd_libs() -> None:
+    """Load distro GLVND EGL/GL libs before Habitat's extensions link Mesa from conda."""
+    if os.environ.get("VLN_SIMULATOR_SKIP_GLVND_PRELOAD", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    if _is_software_gl_forced():
+        return
+    if sys.platform != "linux":
+        return
+
+    search_dirs = [Path("/usr/lib/x86_64-linux-gnu")]
+    alt64 = Path("/usr/lib64")
+    if alt64.is_dir():
+        search_dirs.append(alt64)
+
+    lib_dirs = [d for d in search_dirs if d.is_dir()]
+    if not lib_dirs:
+        return
+
+    names = ("libGLdispatch.so.0", "libOpenGL.so.0", "libEGL.so.1")
+
+    try:
+        import ctypes
+    except ImportError:
+        return
+
+    mode = ctypes.RTLD_GLOBAL
+    loaded = []
+    for name in names:
+        for ld in lib_dirs:
+            candidate = ld / name
+            if candidate.is_file():
+                try:
+                    ctypes.CDLL(str(candidate), mode=mode)
+                    loaded.append(str(candidate))
+                except OSError:
+                    continue
+                break
+
+    if loaded and os.environ.get("VLN_SIMULATOR_DEBUG_EGL", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        print("[vln_simulator egl] preloaded libs:", loaded, flush=True)
+
+
+if _is_software_gl_forced():
+    _apply_software_gl_env()
+
+_optimize_ld_library_path_for_nv_egl()
+_bootstrap_egl_env_pre_import()
+_preload_system_glvnd_libs()
+
+mag_device_boot = os.environ.get("VLN_SIMULATOR_MAGNUM_DEVICE")
+if mag_device_boot and mag_device_boot.strip():
+    os.environ.setdefault("MAGNUM_DEVICE", mag_device_boot.strip())
+
+import hydra
+import habitat_sim
+
 
 # Conditionally import ROSDataCollector
 from .utils.ros_data_collector import *

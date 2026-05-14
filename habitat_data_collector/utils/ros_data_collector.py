@@ -4,6 +4,7 @@ try:
     import rclpy
     import subprocess
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from nav_msgs.msg import Path
     from sensor_msgs.msg import Image, CameraInfo
     from nav_msgs.msg import Odometry
@@ -23,9 +24,16 @@ try:
             self.bridge = CvBridge()
 
             if self.ros_enabled:
+                # 与 rclpy create_publisher(..., depth) 默认一致：RELIABLE + KEEP_LAST，便于 ros2 topic hz / 桥接订阅匹配。
+                _qos_img = QoSProfile(
+                    history=HistoryPolicy.KEEP_LAST,
+                    depth=10,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.VOLATILE,
+                )
                 # Initialize ROS publishers
-                self.rgb_pub = self.create_publisher(Image, '/camera/rgb/image_raw', 10)
-                self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', 10)
+                self.rgb_pub = self.create_publisher(Image, '/camera/rgb/image_raw', _qos_img)
+                self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', _qos_img)
                 self.pose_pub = self.create_publisher(Odometry, '/camera/pose', 10)
                 self.camera_info_pub = self.create_publisher(CameraInfo, 'camera_info', 10)
 

@@ -51,6 +51,19 @@ conda env create -f environment.yml
 conda activate vln_simulator
 ```
 
+#### 2.3（可选）在同一环境中安装 NaVid / Uni-NaVid 依赖
+
+NaVid 官方 `requirements.txt` 固定 `numpy==1.23.5`，与本子模块 **habitat-sim** 要求的 **`numpy==1.26.4`** 冲突。请在 **不要降级 numpy** 的前提下，使用仓库内的兼容清单安装其余库：
+
+```bash
+conda activate vln_simulator
+# 建议先用 conda 安装 PyTorch（与 numpy 1.26 同环境，二选一）：
+# GPU: INSTALL_TORCH_CONDA=1 bash scripts/install_navid_deps_vln_simulator.sh
+# CPU: INSTALL_TORCH_CONDA=1 INSTALL_TORCH_CPU=1 bash scripts/install_navid_deps_vln_simulator.sh
+# 若 torch 已装好：SKIP_TORCH=1 bash scripts/install_navid_deps_vln_simulator.sh
+bash scripts/install_navid_deps_vln_simulator.sh
+```
+
 #### 3. 编译并安装 Habitat Sim & Lab
 
 > 此步骤需要一些时间，因为它会从源码编译 Habitat-Sim。

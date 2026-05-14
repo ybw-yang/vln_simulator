@@ -12,7 +12,6 @@ import cv2
 import magnum as mn
 import numpy as np
 import yaml
-from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from scipy.spatial.transform import Rotation as R
@@ -28,7 +27,7 @@ import habitat.sims.habitat_simulator.sim_utilities as sutils
 def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
     # Simulator configuration
     sim_cfg = habitat_sim.SimulatorConfiguration()
-    sim_cfg.gpu_device_id = 0
+    sim_cfg.gpu_device_id = int(cfg.gpu_device_id)
 
     if cfg.load_from_config:
         # 从 JSON 配置文件加载场景路径和配置路径

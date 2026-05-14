@@ -1,0 +1,40 @@
+# NaVid / Uni-NaVid 在 vln_simulator 环境中使用的兼容依赖
+# ------------------------------------------------------------------
+# 与 habitat-sim 子模块冲突项的处理：
+#   - 不要安装 numpy==1.23.5：habitat-sim 要求 numpy==1.26.4，保持环境内 numpy 1.26.x。
+#   - 不要降级 scipy：保持与 numpy 1.26 匹配的 scipy<1.15（见 conda-forge / 项目说明）。
+#   - torch / torchvision：必须成对匹配，否则 import torchvision 会报
+#     RuntimeError: operator torchvision::nms does not exist。推荐与 NaVid 一致：2.0.1 + 0.15.2。
+#   - gym：须与 habitat-lab 一致（gym.envs.registration.registry.env_specs）。gym>=0.26 会破坏
+#     habitat_data_collector（AttributeError: dict has no env_specs）。固定 gym==0.22.0。
+#   - opencv：vln_simulator 已 pin opencv-python==4.10.0.84，此处不重复声明。
+# ------------------------------------------------------------------
+
+fastapi
+gradio==3.35.2
+markdown2[all]
+requests
+sentencepiece==0.1.99
+tokenizers>=0.12.1,<0.14
+uvicorn
+shortuuid
+peft==0.4.0
+transformers==4.31.0
+accelerate==0.21.0
+bitsandbytes==0.41.0
+scikit-learn>=1.2.2,<1.5
+einops==0.6.1
+einops-exts==0.0.4
+timm==0.6.13
+gradio_client==0.2.9
+fairscale
+decord
+absl-py
+braceexpand
+simplejson
+dtw
+fastdtw
+gym==0.22.0
+
+torch==2.0.1
+torchvision==0.15.2
