@@ -16,9 +16,13 @@ class ROSDataCollector(Node):
         if self.ros_enabled:
             # Initialize ROS publishers
             self.rgb_pub = self.create_publisher(Image, '/camera/rgb/image_raw', 10)
+            self.left_rgb_pub = self.create_publisher(Image, '/camera/left/rgb/image_raw', 10)
+            self.right_rgb_pub = self.create_publisher(Image, '/camera/right/rgb/image_raw', 10)
             self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', 10)
             self.pose_pub = self.create_publisher(Odometry, '/camera/pose', 10)
             self.camera_info_pub = self.create_publisher(CameraInfo, 'camera_info', 10)
+            self.left_camera_info_pub = self.create_publisher(CameraInfo, 'camera_left/camera_info', 10)
+            self.right_camera_info_pub = self.create_publisher(CameraInfo, 'camera_right/camera_info', 10)
 ```
 
 Topic names and message types are defined in this section of the code and should be modified as necessary. All functionality is implemented in **ROS2**.

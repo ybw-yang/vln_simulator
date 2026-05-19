@@ -462,9 +462,8 @@ def main(cfg: DictConfig) -> None:
 
     # Get camera parameters and save
     # 获取并保存相机内参
-    fx, fy, cx, cy, width, height = get_camera_intrinsics(sim, "color_sensor")
     intrinsics_file_path = scene_dir / "camera_intrinsics.json"
-    save_intrinsics(intrinsics_file_path, fx, fy, cx, cy, width, height)
+    save_all_camera_intrinsics(sim, intrinsics_file_path, list_rgb_sensor_uuids(cfg))
 
     # Set frame rate
     # 设置帧率控制
@@ -577,15 +576,27 @@ def main(cfg: DictConfig) -> None:
         # Publish data via ROS if enabled
         # 如果启用了 ROS，发布 RGB、深度、位姿和相机信息
         if data_collector:
-            rgb_img = np.array(obs["color_sensor"])
-            depth_img = np.array(obs["depth_sensor"])
-            fx, fy, cx, cy, width, height = get_camera_intrinsics(sim, "color_sensor")
             pose = get_agent_pose(agent)
-
-            data_collector.publish_rgb(rgb_img)
-            data_collector.publish_depth(depth_img)
             data_collector.publish_pose(pose)
-            data_collector.publish_camera_info(fx, fy, cx, cy, width, height)
+
+            if cfg.data_cfg.rgb and "color_sensor" in obs:
+                rgb_img = np.array(obs["color_sensor"])
+                fx, fy, cx, cy, width, height = get_camera_intrinsics(sim, "color_sensor")
+                data_collector.publish_rgb(rgb_img)
+                data_collector.publish_camera_info(fx, fy, cx, cy, width, height)
+
+            if stereo_rgb_enabled(cfg):
+                if "left_color_sensor" in obs:
+                    lfx, lfy, lcx, lcy, lw, lh = get_camera_intrinsics(sim, "left_color_sensor")
+                    data_collector.publish_left_rgb(np.array(obs["left_color_sensor"]))
+                    data_collector.publish_left_camera_info(lfx, lfy, lcx, lcy, lw, lh)
+                if "right_color_sensor" in obs:
+                    rfx, rfy, rcx, rcy, rw, rh = get_camera_intrinsics(sim, "right_color_sensor")
+                    data_collector.publish_right_rgb(np.array(obs["right_color_sensor"]))
+                    data_collector.publish_right_camera_info(rfx, rfy, rcx, rcy, rw, rh)
+
+            if cfg.data_cfg.depth and "depth_sensor" in obs:
+                data_collector.publish_depth(np.array(obs["depth_sensor"]))
 
         # Actions based on ROS information
         # 监听 ROS 传来的全局路径

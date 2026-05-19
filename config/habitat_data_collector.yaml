@@ -59,6 +59,9 @@ data_cfg:
   start_pos_y: 0.0
   # 启用/禁用特定传感器输出
   rgb: true
+  # 左右目 RGB（与正中 color_sensor 并存；基线为相机间距，单位米）
+  stereo_rgb: true
+  stereo_baseline: 0.12
   depth: true
   semantic: true
   # 图像的像素尺寸

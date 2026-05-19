@@ -73,6 +73,33 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
         )
         sensor_spec.append(rgb_sensor_spec)
 
+    # Left / right RGB (agent frame: X right, Y up, -Z forward)
+    if cfg.data_cfg.get("stereo_rgb", False):
+        half_base = float(cfg.data_cfg.get("stereo_baseline", 0.12)) / 2.0
+        cam_h = cfg.data_cfg.camera_height
+        res_h, res_w = cfg.data_cfg.resolution.h, cfg.data_cfg.resolution.w
+        yaw_in = np.deg2rad(20.0)  # 左目绕 Y 轴略向左（远离场景中心）
+        sensor_spec.append(
+            make_sensor_spec(
+                "left_color_sensor",
+                habitat_sim.SensorType.COLOR,
+                res_h,
+                res_w,
+                [-half_base, cam_h, 0.0],
+                orientation=[0.0, yaw_in, 0.0],
+            )
+        )
+        sensor_spec.append(
+            make_sensor_spec(
+                "right_color_sensor",
+                habitat_sim.SensorType.COLOR,
+                res_h,
+                res_w,
+                [half_base, cam_h, 0.0],
+                orientation=[0.0, -yaw_in, 0.0],
+            )
+        )
+
     # Depth sensor specification
     if cfg.data_cfg.depth:
         depth_sensor_spec = make_sensor_spec(
@@ -344,6 +371,40 @@ def display_obs(obs, help_count, topdown_map = None, recording = False):
     # Draw the "REC" text
     cv2.putText(rgb_img_cv, rec_text, rec_position, cv2.FONT_HERSHEY_SIMPLEX, 1, rec_color, 2, cv2.LINE_AA)
 
+    # Left / right camera thumbnails (bottom corners)
+    thumb_scale = 0.22
+    pad = 12
+    for sensor_uuid, corner in (
+        ("left_color_sensor", "bl"),
+        ("right_color_sensor", "br"),
+    ):
+        if sensor_uuid not in obs:
+            continue
+        thumb = cv2.cvtColor(np.asarray(obs[sensor_uuid]), cv2.COLOR_RGB2BGR)
+        tw = max(1, int(rgb_img_cv.shape[1] * thumb_scale))
+        th = max(1, int(tw * thumb.shape[0] / max(thumb.shape[1], 1)))
+        thumb = cv2.resize(thumb, (tw, th))
+        thumb = cv2.copyMakeBorder(
+            thumb, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=(0, 200, 0)
+        )
+        y0 = rgb_img_cv.shape[0] - th - pad - 2
+        if corner == "bl":
+            x0 = pad
+        else:
+            x0 = rgb_img_cv.shape[1] - tw - pad - 4
+        rgb_img_cv[y0 : y0 + thumb.shape[0], x0 : x0 + thumb.shape[1]] = thumb
+        label = "L" if corner == "bl" else "R"
+        cv2.putText(
+            rgb_img_cv,
+            label,
+            (x0 + 4, y0 - 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 220, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
     # Show the final image
     cv2.imshow("RGB with Depth and Semantic", rgb_img_cv)
 
@@ -381,14 +442,25 @@ def save_obs(
     # Format the timestamp with fixed width, using 15 characters and 6 decimal places
     formatted_timestamp = f"{action_timestamp:015.7f}"
     
-    if cfg.data_cfg.rgb:
-        # Save rgb
+    if cfg.data_cfg.rgb and "color_sensor" in observations:
         save_name = f"{formatted_timestamp}.png"
         save_dir = root_save_dir / "rgb"
         os.makedirs(save_dir, exist_ok=True)
         save_path = save_dir / save_name
-        obs = observations["color_sensor"][:, :, [2, 1, 0]] / 255
         cv2.imwrite(str(save_path), observations["color_sensor"][:, :, [2, 1, 0]])
+
+    if stereo_rgb_enabled(cfg):
+        for sensor_uuid, subdir in (
+            ("left_color_sensor", "rgb_left"),
+            ("right_color_sensor", "rgb_right"),
+        ):
+            if sensor_uuid not in observations:
+                continue
+            save_name = f"{formatted_timestamp}.png"
+            save_dir = root_save_dir / subdir
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = save_dir / save_name
+            cv2.imwrite(str(save_path), observations[sensor_uuid][:, :, [2, 1, 0]])
 
     if cfg.data_cfg.depth:
         save_name = f"{formatted_timestamp}.png"
@@ -555,6 +627,37 @@ def convert_points_to_topdown(pathfinder, point, meters_per_pixel):
     py = (point[2] - bounds[0][2]) / meters_per_pixel
 
     return np.array([px, py])
+
+def stereo_rgb_enabled(cfg: DictConfig) -> bool:
+    return bool(cfg.data_cfg.get("stereo_rgb", False))
+
+
+def list_rgb_sensor_uuids(cfg: DictConfig) -> List[str]:
+    """Ordered RGB sensor UUIDs present when corresponding flags are enabled."""
+    uuids: List[str] = []
+    if cfg.data_cfg.rgb:
+        uuids.append("color_sensor")
+    if stereo_rgb_enabled(cfg):
+        uuids.extend(["left_color_sensor", "right_color_sensor"])
+    return uuids
+
+
+def save_all_camera_intrinsics(sim, filepath: Union[str, Path], sensor_names: List[str]) -> None:
+    """Save per-sensor pinhole intrinsics to one JSON file."""
+    data = {}
+    for name in sensor_names:
+        fx, fy, cx, cy, width, height = get_camera_intrinsics(sim, name)
+        data[name] = {
+            "fx": fx,
+            "fy": fy,
+            "cx": cx,
+            "cy": cy,
+            "width": width,
+            "height": height,
+        }
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
 
 def get_camera_intrinsics(sim, sensor_name):
     # Get render camera
@@ -1348,12 +1451,22 @@ def replay_and_save(sim, cfg, scene_dir, actions_list, init_record_state, init_r
     agent = sim.get_agent(cfg.default_agent)
     agent.set_state(init_record_state)
     agent_state = agent.get_state()
-    agent_state.sensor_states["color_sensor"].position = init_record_state.sensor_states["color_sensor"].position
-    agent_state.sensor_states["color_sensor"].rotation = init_record_state.sensor_states["color_sensor"].rotation
-    agent_state.sensor_states["depth_sensor"].position = init_record_state.sensor_states["depth_sensor"].position
-    agent_state.sensor_states["depth_sensor"].rotation = init_record_state.sensor_states["depth_sensor"].rotation
-    agent_state.sensor_states["semantic_sensor"].position = init_record_state.sensor_states["semantic_sensor"].position
-    agent_state.sensor_states["semantic_sensor"].rotation = init_record_state.sensor_states["semantic_sensor"].rotation
+    for sensor_uuid in (
+        "color_sensor",
+        "left_color_sensor",
+        "right_color_sensor",
+        "depth_sensor",
+        "semantic_sensor",
+        "back_color_sensor",
+    ):
+        if sensor_uuid not in init_record_state.sensor_states:
+            continue
+        agent_state.sensor_states[sensor_uuid].position = init_record_state.sensor_states[
+            sensor_uuid
+        ].position
+        agent_state.sensor_states[sensor_uuid].rotation = init_record_state.sensor_states[
+            sensor_uuid
+        ].rotation
 
     agent.set_state(agent_state, reset_sensors=True, infer_sensor_states=False)
 

@@ -33,17 +33,32 @@ try:
                 )
                 # Initialize ROS publishers
                 self.rgb_pub = self.create_publisher(Image, '/camera/rgb/image_raw', _qos_img)
+                self.left_rgb_pub = self.create_publisher(Image, '/camera/left/rgb/image_raw', _qos_img)
+                self.right_rgb_pub = self.create_publisher(Image, '/camera/right/rgb/image_raw', _qos_img)
                 self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', _qos_img)
                 self.pose_pub = self.create_publisher(Odometry, '/camera/pose', 10)
                 self.camera_info_pub = self.create_publisher(CameraInfo, 'camera_info', 10)
+                self.left_camera_info_pub = self.create_publisher(CameraInfo, 'camera_left/camera_info', 10)
+                self.right_camera_info_pub = self.create_publisher(CameraInfo, 'camera_right/camera_info', 10)
+
+        def _publish_bgr_image(self, publisher, rgb_img, frame_id: str) -> None:
+            if not self.ros_enabled:
+                return
+            bgr = rgb_img[:, :, [2, 1, 0]]
+            ros_img = self.bridge.cv2_to_imgmsg(bgr, encoding="bgr8")
+            stamp = self.get_clock().now().to_msg()
+            ros_img.header.stamp = stamp
+            ros_img.header.frame_id = frame_id
+            publisher.publish(ros_img)
 
         def publish_rgb(self, rgb_img):
-            if self.ros_enabled:
-                # Process RGB image (flip channels from RGB to BGR)
-                rgb_img_processed = rgb_img[:, :, [2, 1, 0]]  # Convert RGB to BGR
-                ros_img = self.bridge.cv2_to_imgmsg(rgb_img_processed, encoding="bgr8")
-                ros_img.header.stamp = self.get_clock().now().to_msg()
-                self.rgb_pub.publish(ros_img)
+            self._publish_bgr_image(self.rgb_pub, rgb_img, "camera_frame")
+
+        def publish_left_rgb(self, rgb_img):
+            self._publish_bgr_image(self.left_rgb_pub, rgb_img, "camera_left_frame")
+
+        def publish_right_rgb(self, rgb_img):
+            self._publish_bgr_image(self.right_rgb_pub, rgb_img, "camera_right_frame")
 
         def publish_depth(self, depth_img):
             if self.ros_enabled:
@@ -83,22 +98,41 @@ try:
                 # Publish Odometry message
                 self.pose_pub.publish(odom_msg)
 
-        def publish_camera_info(self, fx, fy, cx, cy, width, height):
+        def _make_camera_info(self, fx, fy, cx, cy, width, height, frame_id: str) -> CameraInfo:
             camera_info_msg = CameraInfo()
-
-            # Intrinsic parameters
             camera_info_msg.width = width
             camera_info_msg.height = height
-            camera_info_msg.k = [float(fx), 0.0, float(cx), 0.0, float(fy), float(cy), 0.0, 0.0, 1.0]  # 3x3 intrinsic matrix
-            camera_info_msg.p = [float(fx), 0.0, float(cx), 0.0, 0.0, float(fy), float(cy), 0.0, 0.0, 0.0, 1.0, 0.0]  # Projection matrix, assuming no distortion
+            camera_info_msg.k = [
+                float(fx), 0.0, float(cx),
+                0.0, float(fy), float(cy),
+                0.0, 0.0, 1.0,
+            ]
+            camera_info_msg.p = [
+                float(fx), 0.0, float(cx), 0.0,
+                0.0, float(fy), float(cy), 0.0,
+                0.0, 0.0, 1.0, 0.0,
+            ]
+            camera_info_msg.header.stamp = self.get_clock().now().to_msg()
+            camera_info_msg.header.frame_id = frame_id
+            return camera_info_msg
 
-            # Timestamp
-            current_time = self.get_clock().now().to_msg()
-            camera_info_msg.header.stamp = current_time
-            camera_info_msg.header.frame_id = 'camera_frame'
+        def publish_camera_info(self, fx, fy, cx, cy, width, height):
+            if self.ros_enabled:
+                self.camera_info_pub.publish(
+                    self._make_camera_info(fx, fy, cx, cy, width, height, "camera_frame")
+                )
 
-            # Publish
-            self.camera_info_pub.publish(camera_info_msg)
+        def publish_left_camera_info(self, fx, fy, cx, cy, width, height):
+            if self.ros_enabled:
+                self.left_camera_info_pub.publish(
+                    self._make_camera_info(fx, fy, cx, cy, width, height, "camera_left_frame")
+                )
+
+        def publish_right_camera_info(self, fx, fy, cx, cy, width, height):
+            if self.ros_enabled:
+                self.right_camera_info_pub.publish(
+                    self._make_camera_info(fx, fy, cx, cy, width, height, "camera_right_frame")
+                )
 
     class ROSDataListener(Node):
         def __init__(self, ros_enabled=True, gazebo_topic: str = "/odom"):
@@ -331,7 +365,16 @@ try:
         :param output_path: Path to save the rosbag file.
         """
 
-        topics_to_record = ['/camera/rgb/image_raw', '/camera/depth/image_raw', '/camera/pose', '/camera_info']
+        topics_to_record = [
+            '/camera/rgb/image_raw',
+            '/camera/left/rgb/image_raw',
+            '/camera/right/rgb/image_raw',
+            '/camera/depth/image_raw',
+            '/camera/pose',
+            '/camera_info',
+            '/camera_left/camera_info',
+            '/camera_right/camera_info',
+        ]
 
         # Prepare the command for recording
         command = ['ros2', 'bag', 'record', '-o', output_path] + topics_to_record
