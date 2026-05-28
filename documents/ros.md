@@ -27,6 +27,8 @@ class ROSDataCollector(Node):
 
 Topic names and message types are defined in this section of the code and should be modified as necessary. All functionality is implemented in **ROS2**.
 
+**Simulation time:** `use_sim_time: true` + `publish_sim_clock: false` (default) — image stamps follow **Gazebo `/clock`**. Start Gazebo with `use_sim_time:=true`. Set `publish_sim_clock: true` only for standalone Habitat without Gazebo.
+
 ## ROS1 Bridge
 
 This section describes how to set up the ROS1-ROS2 bridge on Ubuntu 22.04 to facilitate the conversion of ROS2 topics to ROS1 topics, ensuring compatibility with simulators that use ROS1.

@@ -4,8 +4,10 @@ try:
     import rclpy
     import subprocess
     from rclpy.node import Node
+    from rclpy.parameter import Parameter
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from nav_msgs.msg import Path
+    from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import Image, CameraInfo
     from nav_msgs.msg import Odometry
     from cv_bridge import CvBridge
@@ -17,13 +19,48 @@ try:
     from scipy.spatial.transform import Rotation as SciRot
     from . import pose_utils
 
+    def ros_init_argv():
+        """Only pass --ros-args to rclpy; Hydra overrides (e.g. use_sim_time=true) must not."""
+        import sys
+
+        argv = sys.argv
+        if not argv:
+            return []
+        if "--ros-args" not in argv:
+            return [argv[0]]
+        idx = argv.index("--ros-args")
+        return [argv[0]] + argv[idx:]
+
+    def _configure_use_sim_time(node: Node, use_sim_time: bool) -> None:
+        """Set ROS clock to simulation time (requires /clock when enabled)."""
+        from rclpy.exceptions import ParameterAlreadyDeclaredException
+
+        try:
+            node.declare_parameter("use_sim_time", use_sim_time)
+        except ParameterAlreadyDeclaredException:
+            pass
+        node.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, use_sim_time)])
+
     class ROSDataCollector(Node):
-        def __init__(self, ros_enabled=False):
+        def __init__(
+            self,
+            ros_enabled=False,
+            use_sim_time: bool = False,
+            publish_sim_clock: bool = False,
+        ):
             super().__init__('data_collector')
+            _configure_use_sim_time(self, use_sim_time)
             self.ros_enabled = ros_enabled
+            self._use_sim_time = use_sim_time
+            self._publish_sim_clock = bool(publish_sim_clock and use_sim_time)
+            self._frame_stamp = None
             self.bridge = CvBridge()
 
             if self.ros_enabled:
+                if self._publish_sim_clock:
+                    self._clock_pub = self.create_publisher(Clock, "/clock", 10)
+                else:
+                    self._clock_pub = None
                 # 与 rclpy create_publisher(..., depth) 默认一致：RELIABLE + KEEP_LAST，便于 ros2 topic hz / 桥接订阅匹配。
                 _qos_img = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST,
@@ -40,6 +77,32 @@ try:
                 self.camera_info_pub = self.create_publisher(CameraInfo, 'camera_info', 10)
                 self.left_camera_info_pub = self.create_publisher(CameraInfo, 'camera_left/camera_info', 10)
                 self.right_camera_info_pub = self.create_publisher(CameraInfo, 'camera_right/camera_info', 10)
+
+        @staticmethod
+        def _sec_to_time_msg(sim_time_sec: float):
+            from builtin_interfaces.msg import Time
+
+            t = Time()
+            sec = int(sim_time_sec)
+            t.sec = sec
+            t.nanosec = int(round((float(sim_time_sec) - sec) * 1e9))
+            return t
+
+        def begin_publish_frame(self, sim_time_sec: float | None = None) -> None:
+            """Stamp 来源：Gazebo /clock（默认）或本节点 publish_sim_clock 时的本地仿真时间。"""
+            if self._publish_sim_clock and sim_time_sec is not None:
+                self._frame_stamp = self._sec_to_time_msg(sim_time_sec)
+                if self._clock_pub is not None:
+                    clock_msg = Clock()
+                    clock_msg.clock = self._frame_stamp
+                    self._clock_pub.publish(clock_msg)
+            else:
+                self._frame_stamp = None
+
+        def _message_stamp(self):
+            if self._frame_stamp is not None:
+                return self._frame_stamp
+            return self.get_clock().now().to_msg()
 
         def _publish_bgr_image(self, publisher, rgb_img, frame_id: str) -> None:
             if not self.ros_enabled:
@@ -65,7 +128,7 @@ try:
                 # Process Depth image (convert depth to mm)
                 depth_img_processed = (depth_img * 1000).astype(np.uint16)  # Convert meters to millimeters
                 ros_depth = self.bridge.cv2_to_imgmsg(depth_img_processed, encoding="16UC1")
-                ros_depth.header.stamp = self.get_clock().now().to_msg()
+                ros_depth.header.stamp = self._message_stamp()
                 self.depth_pub.publish(ros_depth)
 
         def publish_pose(self, pose):
@@ -74,7 +137,7 @@ try:
                 odom_msg = Odometry()
 
                 # Set timestamp and coordinate frames
-                odom_msg.header.stamp = self.get_clock().now().to_msg()
+                odom_msg.header.stamp = self._message_stamp()
                 odom_msg.header.frame_id = 'map'          # Parent coordinate frame (global coordinate frame)
                 odom_msg.child_frame_id = ''              # Child coordinate frame (robot itself)
 
@@ -112,7 +175,7 @@ try:
                 0.0, float(fy), float(cy), 0.0,
                 0.0, 0.0, 1.0, 0.0,
             ]
-            camera_info_msg.header.stamp = self.get_clock().now().to_msg()
+            camera_info_msg.header.stamp = self._message_stamp()
             camera_info_msg.header.frame_id = frame_id
             return camera_info_msg
 
@@ -135,8 +198,9 @@ try:
                 )
 
     class ROSDataListener(Node):
-        def __init__(self, ros_enabled=True, gazebo_topic: str = "/odom"):
+        def __init__(self, ros_enabled=True, gazebo_topic: str = "/odom", use_sim_time: bool = False):
             super().__init__('listener_node')
+            _configure_use_sim_time(self, use_sim_time)
             self.ros_enabled = ros_enabled
 
             self.latest_path = None  # Used to store the most recently received path

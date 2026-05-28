@@ -70,6 +70,8 @@ data_cfg:
     h: 680
   # 相机离地高度（米）设置为机器人的高度
   camera_height: 1.5
+  # 针孔相机水平视场角 hfov（度）；作用于 RGB / 深度 / 语义及后视相机
+  hfov: 120
 
 # Agent Movement
 # 配置智能体控制速度（根据动作以米/秒或度/帧为单位）
@@ -102,6 +104,10 @@ frame_rate: 30.0
 
 # Publish ROS2 topics
 use_ros: True
+# 使用仿真时钟：与 Gazebo 一致时设 use_sim_time=true、publish_sim_clock=false（默认）
+# 仅无 Gazebo、单机 Habitat 调试时可设 publish_sim_clock=true 由本节点发 /clock
+use_sim_time: true
+publish_sim_clock: false
 # The recording can also record the rosbag along with the rgbd raw data
 record_rosbag: True
 

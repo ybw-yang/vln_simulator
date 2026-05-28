@@ -108,6 +108,17 @@ source /opt/ros/humble/setup.bash  # or setup.zsh
 
 Once sourced, the simulator will publish data to ROS2 topics. You can record them by enabling the ROS recording configuration in `config/habitat_data_collector.yaml`. See the [ROS Integration Documentation](documents/ros.md) for topic configuration and ROS2-to-ROS1 bridge setup.
 
+With Gazebo or other simulators, enable simulation time consistently:
+
+```bash
+python -m habitat_data_collector.main
+# Hydra override (use =, not ROS :=):
+python -m habitat_data_collector.main use_sim_time=true
+# or set use_sim_time: true in config/habitat_data_collector.yaml
+```
+
+When `use_sim_time` is true, a `/clock` publisher must be running (e.g. Gazebo with `use_sim_time`).
+
 
 ## 📘 User Guide
 

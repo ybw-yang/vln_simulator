@@ -323,18 +323,41 @@ def main(cfg: DictConfig) -> None:
     # 如果环境支持 ROS 且配置中启用了 ROS，则初始化 ROS 节点
     if ros_enabled and cfg.get("use_ros", True):  # Only initialize ROS if it's enabled
         import rclpy
-        rclpy.init()
-        # 初始化数据收集器（发布者）和监听器（订阅者）
-        data_collector = ROSDataCollector(ros_enabled=True)
-        data_listener = ROSDataListener(ros_enabled=True)
-        
-        # 在单独的线程中运行 ROS 2 spin，以免阻塞主仿真循环
+        use_sim_time = bool(cfg.get("use_sim_time", True))
+        # 与 Gazebo 联调：默认跟随 Gazebo 的 /clock，不由 Habitat 发布
+        publish_sim_clock = bool(cfg.get("publish_sim_clock", False))
+        rclpy.init(args=ros_init_argv())
+        data_collector = ROSDataCollector(
+            ros_enabled=True,
+            use_sim_time=use_sim_time,
+            publish_sim_clock=publish_sim_clock,
+        )
+        data_listener = ROSDataListener(
+            ros_enabled=True,
+            gazebo_topic=str(cfg.get("gazebo_robot_topic", "/odom")),
+            use_sim_time=use_sim_time,
+        )
+
+        from rclpy.executors import MultiThreadedExecutor
+
+        ros_executor = MultiThreadedExecutor(num_threads=2)
+        ros_executor.add_node(data_collector)
+        ros_executor.add_node(data_listener)
+
         def spin_ros():
-            rclpy.spin(data_listener)
+            ros_executor.spin()
 
         ros_thread = threading.Thread(target=spin_ros, daemon=True)
         ros_thread.start()
-        print("ROS is enabled and initialized.")
+        print(
+            f"ROS is enabled and initialized "
+            f"(use_sim_time={use_sim_time}, publish_sim_clock={publish_sim_clock and use_sim_time})."
+        )
+        if use_sim_time and not publish_sim_clock:
+            print(
+                "Sim time: following external /clock (e.g. Gazebo). "
+                "Ensure Gazebo runs with use_sim_time and publishes /clock."
+            )
     else:
         data_collector = None
         data_listener = None
@@ -486,6 +509,11 @@ def main(cfg: DictConfig) -> None:
 
 
     last_time = time.time()
+    sim_time_sec = 0.0
+    ros_use_sim_time = bool(cfg.get("use_sim_time", True)) if data_collector else False
+    ros_publish_sim_clock = (
+        bool(cfg.get("publish_sim_clock", False)) and ros_use_sim_time if data_collector else False
+    )
 
     while True:
 
@@ -502,6 +530,8 @@ def main(cfg: DictConfig) -> None:
         topdown_map = None
         # 执行物理步进
         sim.step_physics(frame_interval)
+        if ros_publish_sim_clock:
+            sim_time_sec += frame_interval
 
         # Filter invalid objects
         # 移除掉落到地板以下的无效物体
@@ -576,6 +606,10 @@ def main(cfg: DictConfig) -> None:
         # Publish data via ROS if enabled
         # 如果启用了 ROS，发布 RGB、深度、位姿和相机信息
         if data_collector:
+            if ros_publish_sim_clock:
+                data_collector.begin_publish_frame(sim_time_sec)
+            else:
+                data_collector.begin_publish_frame(None)
             pose = get_agent_pose(agent)
             data_collector.publish_pose(pose)
 

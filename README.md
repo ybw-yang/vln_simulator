@@ -96,6 +96,18 @@ python -m habitat_data_collector.main
 
 默认情况下，它使用位于 `config/habitat_data_collector.yaml` 的配置文件。有关配置详情，请参阅 [配置参考](documents/config_reference/config_reference.md)。
 
+与 Gazebo 等仿真联调时，建议统一开启仿真时钟：
+
+```bash
+python -m habitat_data_collector.main
+# 或命令行覆盖（Hydra 语法用 =，不是 ROS 的 :=）：
+python -m habitat_data_collector.main use_sim_time=true
+python -m habitat_data_collector.main use_sim_time=false
+# 或在 habitat_data_collector.yaml 中设置 use_sim_time: true
+```
+
+`use_sim_time: true` 且 **`publish_sim_clock: false`（默认）** 时，图像 stamp 与 **Gazebo 的 `/clock`** 一致；请确保 Gazebo 以 `use_sim_time` 启动。仅无 Gazebo 单机调试时设 `publish_sim_clock: true`。
+
 
 
 ## 五. 用户指南

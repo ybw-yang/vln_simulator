@@ -14,6 +14,8 @@ dependencies:
   - scipy
   - tqdm
   - pip:
+      # spawn_entity.py uses `env python3`; with conda active, lxml must be installed.
+      - lxml
       - opencv-python==4.10.0.84
       - hydra-core
       - omegaconf

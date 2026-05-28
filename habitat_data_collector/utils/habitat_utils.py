@@ -50,6 +50,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
 
     # Sensor specifications
     sensor_spec = []
+    hfov = float(cfg.data_cfg.get("hfov", 90.0))
 
     # Back RGB sensor specification
     back_rgb_sensor_spec = make_sensor_spec(
@@ -59,6 +60,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
         cfg.data_cfg.resolution.w,
         [0.0, cfg.data_cfg.camera_height, 1.3],
         orientation=[-np.pi / 8, 0.0, 0.0],
+        hfov=hfov,
     )
     sensor_spec.append(back_rgb_sensor_spec)
 
@@ -70,6 +72,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
             cfg.data_cfg.resolution.h,
             cfg.data_cfg.resolution.w,
             [0.0, cfg.data_cfg.camera_height, 0.0],
+            hfov=hfov,
         )
         sensor_spec.append(rgb_sensor_spec)
 
@@ -78,7 +81,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
         half_base = float(cfg.data_cfg.get("stereo_baseline", 0.12)) / 2.0
         cam_h = cfg.data_cfg.camera_height
         res_h, res_w = cfg.data_cfg.resolution.h, cfg.data_cfg.resolution.w
-        yaw_in = np.deg2rad(20.0)  # 左目绕 Y 轴略向左（远离场景中心）
+        yaw_in = np.deg2rad(40.0)  # 左目绕 Y 轴略向左（远离场景中心）
         sensor_spec.append(
             make_sensor_spec(
                 "left_color_sensor",
@@ -87,6 +90,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
                 res_w,
                 [-half_base, cam_h, 0.0],
                 orientation=[0.0, yaw_in, 0.0],
+                hfov=hfov,
             )
         )
         sensor_spec.append(
@@ -97,6 +101,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
                 res_w,
                 [half_base, cam_h, 0.0],
                 orientation=[0.0, -yaw_in, 0.0],
+                hfov=hfov,
             )
         )
 
@@ -108,6 +113,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
             cfg.data_cfg.resolution.h,
             cfg.data_cfg.resolution.w,
             [0.0, cfg.data_cfg.camera_height, 0.0],
+            hfov=hfov,
         )
         sensor_spec.append(depth_sensor_spec)
 
@@ -119,6 +125,7 @@ def make_cfg(cfg: DictConfig) -> habitat_sim.Configuration:
             cfg.data_cfg.resolution.h,
             cfg.data_cfg.resolution.w,
             [0.0, cfg.data_cfg.camera_height, 0.0],
+            hfov=hfov,
         )
         sensor_spec.append(semantic_sensor_spec)
 
@@ -163,6 +170,7 @@ def make_sensor_spec(
     w: int,
     position: Union[List, np.ndarray],
     orientation: Union[List, np.ndarray] = None,
+    hfov: float = 90.0,
 ) -> Dict:
     sensor_spec = habitat_sim.CameraSensorSpec()
     sensor_spec.uuid = uuid
@@ -171,6 +179,7 @@ def make_sensor_spec(
     sensor_spec.position = position
     if orientation:
         sensor_spec.orientation = orientation
+    sensor_spec.hfov = hfov
 
     sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
     return sensor_spec
