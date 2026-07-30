@@ -38,7 +38,8 @@ scene_config: ${dataset_root}/HM3D_collect/${scene_name}/dynamic_scene_config/01
 
 # HM3D
 scene_path: ${dataset_root}/hm3d/val/00829-QaLdnwvtxbs/QaLdnwvtxbs.basis.glb
-scene_dataset_config: ${dataset_root}/hm3d/val/hm3d_annotated_basis.scene_dataset_config.json
+# val split 专用配置（36 个带语义标注的场景）；全局配置在 ${dataset_root}/hm3d/ 根目录
+scene_dataset_config: ${dataset_root}/hm3d/val/hm3d_annotated_val_basis.scene_dataset_config.json
 
 # MP3D
 # scene_path: ${dataset_root}/habitat-sim/data/mp3d_example/17DRP5sb8fy/17DRP5sb8fy.glb

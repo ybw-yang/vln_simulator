@@ -442,6 +442,21 @@ def main(cfg: DictConfig) -> None:
     if cfg.show_placable_categories:
         draw_bounding_boxes(sim, obj_attr_mgr, all_bboxes_for_place)
 
+    # 若场景未随附 .navmesh 文件（如 hm3d-val-glb 数据），则从场景网格实时重建，
+    # 否则 pathfinder 未加载，get_random_navigable_point() 会返回 NaN 坐标
+    if not sim.pathfinder.is_loaded:
+        print("No navmesh found for this scene, recomputing from scene mesh...")
+        navmesh_settings = habitat_sim.NavMeshSettings()
+        navmesh_settings.set_defaults()
+        navmesh_settings.agent_height = cfg.data_cfg.camera_height
+        navmesh_settings.agent_radius = 0.2
+        if sim.recompute_navmesh(sim.pathfinder, navmesh_settings):
+            print("Navmesh recomputed successfully.")
+        else:
+            raise RuntimeError(
+                "Failed to recompute navmesh; cannot sample navigable points."
+            )
+
     # Set the initial state
     # 设置智能体的初始状态（随机位置）
     agent_state = habitat_sim.AgentState()
